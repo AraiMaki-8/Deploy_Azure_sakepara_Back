@@ -1,0 +1,30 @@
+# Python virtual environments
+.venv/
+venv/
+ENV/
+pointvenv/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environment variables
+.env copy
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+
+# Logs
+*.log
+
+# SSL certificates (if you want to exclude them)
+# DigiCertGlobalRootCA.crt.pem
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/ 
