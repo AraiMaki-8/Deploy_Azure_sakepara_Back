@@ -97,18 +97,24 @@ try:
         else:
             # SSL証明書ファイルが存在しない場合は警告
             print(f"⚠️ SSL証明書ファイルが見つかりません: {ssl_ca_path}")
-            # とりあえずSSL設定なしで試す
-            DATABASE_URL = f"mysql+pymysql://{MYSQL_USER}:{MYSQL_PASSWORD}@{MYSQL_HOST}:{MYSQL_PORT}/{MYSQL_DATABASE}?ssl_mode=REQUIRED"
+            # SSL接続なしで試行
+            DATABASE_URL = f"mysql+pymysql://{MYSQL_USER}:{MYSQL_PASSWORD}@{MYSQL_HOST}:{MYSQL_PORT}/{MYSQL_DATABASE}"
     elif SSL_MODE == "disabled":
         # SSL無効モード
         print("⚠️ SSLは無効に設定されています。本番環境では推奨されません。")
-        DATABASE_URL = f"mysql+pymysql://{MYSQL_USER}:{MYSQL_PASSWORD}@{MYSQL_HOST}:{MYSQL_PORT}/{MYSQL_DATABASE}?ssl_mode=DISABLED"
+        DATABASE_URL = f"mysql+pymysql://{MYSQL_USER}:{MYSQL_PASSWORD}@{MYSQL_HOST}:{MYSQL_PORT}/{MYSQL_DATABASE}"
     else:
-        # デフォルト（preferred）
+        # デフォルト（preferred）- connect_argsを使用するため、URLにはSSLパラメータを含めない
         print("✅ SSL設定: preferred（利用可能な場合はSSLを使用）")
-        DATABASE_URL = f"mysql+pymysql://{MYSQL_USER}:{MYSQL_PASSWORD}@{MYSQL_HOST}:{MYSQL_PORT}/{MYSQL_DATABASE}?ssl_mode=PREFERRED"
+        # 証明書ファイルが存在する場合のみ追加
+        if ssl_ca_exists:
+            connect_args = {"ssl": {"ca": ssl_ca_path}}
+        DATABASE_URL = f"mysql+pymysql://{MYSQL_USER}:{MYSQL_PASSWORD}@{MYSQL_HOST}:{MYSQL_PORT}/{MYSQL_DATABASE}"
     
     print(f"✅ データベース接続URL（パスワードなし）: {DATABASE_URL.replace(MYSQL_PASSWORD, '***')}")
+    print(f"✅ 使用するconnect_args: {connect_args}")
+    
+    # 明示的にconnect_argsを指定
     engine = create_engine(DATABASE_URL, connect_args=connect_args)
     
     # 試験的に接続してみる
