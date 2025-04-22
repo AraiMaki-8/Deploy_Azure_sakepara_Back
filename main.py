@@ -1,153 +1,9 @@
 import os
-from fastapi import FastAPI, Depends, HTTPException, Query
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import create_engine, Column, Integer, String, ForeignKey, TIMESTAMP, desc, Text
-from sqlalchemy.orm import sessionmaker, relationship, declarative_base, Session
 from datetime import datetime
-from dotenv import load_dotenv
-from typing import List, Optional
-from pydantic import BaseModel
-import sys
-import traceback
 
-# ==============================
-# 🎯 .env ファイルの読み込み
-# ==============================
-load_dotenv()
-
-# 環境変数の取得 - デフォルト値を設定
-MYSQL_USER = os.getenv("MYSQL_USER", "sakeparadb")
-MYSQL_PASSWORD = os.getenv("MYSQL_PASSWORD", "lzxVB3hCBTDi")
-MYSQL_HOST = os.getenv("MYSQL_HOST", "tech0-gen-8-step4-sakepara-db.mysql.database.azure.com")
-MYSQL_PORT = os.getenv("MYSQL_PORT", "3306")
-MYSQL_DATABASE = os.getenv("MYSQL_DATABASE", "point_program_db")
-MYSQL_SSL_CA = os.getenv("MYSQL_SSL_CA", "DigiCertGlobalRootCA.crt.pem")
-SSL_MODE = os.getenv("SSL_MODE", "preferred")  # preferred, required, disabled
-
-# ポート番号を整数に変換
-try:
-    MYSQL_PORT = int(MYSQL_PORT)
-except (ValueError, TypeError):
-    MYSQL_PORT = 3306  # 変換できない場合はデフォルト値を使用
-
-# 環境変数の読み込み状況（デバッグ用）
-print("✅ 環境変数の確認:")
-print(f"MYSQL_USER: {MYSQL_USER}")
-print(f"MYSQL_HOST: {MYSQL_HOST}")
-print(f"MYSQL_PORT: {MYSQL_PORT}")
-print(f"MYSQL_DATABASE: {MYSQL_DATABASE}")
-print(f"MYSQL_SSL_CA: {MYSQL_SSL_CA}")
-print(f"SSL_MODE: {SSL_MODE}")
-
-# カレントディレクトリの確認
-current_dir = os.getcwd()
-print(f"現在の作業ディレクトリ: {current_dir}")
-
-# ファイルの存在確認
-ssl_ca_path = os.path.join(current_dir, MYSQL_SSL_CA)
-ssl_ca_exists = os.path.isfile(ssl_ca_path)
-print(f"SSL証明書ファイル({ssl_ca_path})の存在: {ssl_ca_exists}")
-
-# ==============================
-# 🎯 リクエスト/レスポンスのモデル
-# ==============================
-class UserResponse(BaseModel):
-    id: int
-    name: str
-    company_name: str
-
-# 期間限定ポイントを削除したバランスレスポンス
-class BalanceResponse(BaseModel):
-    user_id: int
-    current_points: int
-    # scheduled_points 削除
-    expiring_points: int
-
-class PointHistoryResponse(BaseModel):
-    id: int
-    date: datetime
-    description: str
-    points: int
-    remarks: Optional[str] = None
-
-class RedeemableItemResponse(BaseModel):
-    id: int
-    name: str
-    points_required: int
-
-class UsePointsRequest(BaseModel):
-    user_id: int
-    item_id: int
-    points: int
-
-# ==============================
-# 🎯 MySQL の接続設定
-# ==============================
-db_connection_error = "デモモード: MySQLへの接続をスキップして、SQLiteを使用します"
-USING_SQLITE_FALLBACK = True
-
-print("⚠️ デモモード: MySQLへの接続をスキップして、SQLiteを使用します")
-
-# SQLite in-memory databaseの設定
-DATABASE_URL = "sqlite:///:memory:"
-engine = create_engine(DATABASE_URL)
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-print("✅ SQLiteデモモード設定完了")
-
-# SQLAlchemyベースクラス
-Base = declarative_base()
-
-# ==============================
-# 🎯 データモデル (SQLAlchemy)
-# ==============================
-
-class User(Base):
-    """ ユーザー情報を管理するテーブル """
-    __tablename__ = "users"
-    id = Column(Integer, primary_key=True, index=True)
-    name = Column(String(255), nullable=False)
-    company_name = Column(String(255), nullable=False)
-
-class UserBalance(Base):
-    """ ユーザーのポイント残高を管理するテーブル """
-    __tablename__ = "user_balance"
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    current_points = Column(Integer, default=0)
-    scheduled_points = Column(Integer, default=0)  # DBには残すが、APIレスポンスには含めない
-    expiring_points = Column(Integer, default=0)
-    updated_at = Column(TIMESTAMP, default=datetime.utcnow, onupdate=datetime.utcnow)
-
-class PointHistory(Base):
-    """ ユーザーのポイント履歴を管理するテーブル """
-    __tablename__ = "point_history"
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    date = Column(TIMESTAMP, default=datetime.utcnow)
-    description = Column(String(255), nullable=False)
-    points = Column(Integer, nullable=False)
-    remarks = Column(Text, nullable=True)  # 追加：備考欄
-
-class RedeemableItem(Base):
-    """ 交換可能なアイテムを管理するテーブル """
-    __tablename__ = "redeemable_items"
-    id = Column(Integer, primary_key=True, index=True)
-    name = Column(String(255), nullable=False)
-    points_required = Column(Integer, nullable=False)
-
-class RedemptionHistory(Base):
-    """ ユーザーのポイント交換履歴を管理するテーブル """
-    __tablename__ = "redemption_history"
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    item_id = Column(Integer, ForeignKey("redeemable_items.id"), nullable=False)
-    date = Column(TIMESTAMP, default=datetime.utcnow)
-    points_spent = Column(Integer, nullable=False)
-
-
-# ==============================
-# 🎯 FastAPI の設定
-# ==============================
+# 超シンプルなAPIを作成 - データベース接続なし
 app = FastAPI()
 
 # CORS設定（フロントエンドとの通信を許可）
@@ -159,322 +15,83 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# データベーステーブルの作成
-try:
-    Base.metadata.create_all(bind=engine)
-    print("✅ データベーステーブルの作成または確認が完了しました")
-    
-    # SQLiteフォールバックの場合はサンプルデータを作成
-    if USING_SQLITE_FALLBACK:
-        print("⚠️ SQLiteフォールバックモード: サンプルデータを作成します")
-        # セッションを取得
-        db = SessionLocal()
-        
-        try:
-            # テーブルが空かチェック
-            if db.query(User).count() == 0:
-                print("⚠️ ユーザーテーブルが空です。サンプルユーザーを作成します。")
-                # サンプルユーザーの追加
-                db.add(User(id=1, name="山田太郎", company_name="サンプル株式会社"))
-                db.add(User(id=2, name="佐藤花子", company_name="テスト合同会社"))
-                db.add(User(id=3, name="鈴木一郎", company_name="デモ企業"))
-                
-                # サンプル残高の追加
-                db.add(UserBalance(user_id=1, current_points=500, scheduled_points=200, expiring_points=100))
-                db.add(UserBalance(user_id=2, current_points=1000, scheduled_points=0, expiring_points=200))
-                db.add(UserBalance(user_id=3, current_points=1500, scheduled_points=500, expiring_points=0))
-                
-                # サンプルポイント履歴の追加
-                db.add(PointHistory(user_id=1, description="初回登録ボーナス", points=500, date=datetime.utcnow()))
-                db.add(PointHistory(user_id=2, description="商品購入", points=1000, date=datetime.utcnow()))
-                db.add(PointHistory(user_id=3, description="友達紹介ボーナス", points=1500, date=datetime.utcnow()))
-                
-                # サンプル交換アイテムの追加
-                db.add(RedeemableItem(id=1, name="QUOカード 500円分", points_required=500))
-                db.add(RedeemableItem(id=2, name="Amazonギフト券 1000円分", points_required=1000))
-                db.add(RedeemableItem(id=3, name="高級ディナー招待券", points_required=2000))
-                
-                # 変更をコミット
-                db.commit()
-                print("✅ サンプルデータの作成が完了しました")
-        except Exception as data_e:
-            print(f"❌ サンプルデータ作成エラー: {str(data_e)}")
-            db.rollback()
-        finally:
-            db.close()
-except Exception as e:
-    print(f"❌ データベーステーブル作成エラー: {str(e)}")
+# 固定のダミーデータ
+DUMMY_USERS = [
+    {"id": 1, "name": "山田太郎", "company_name": "サンプル株式会社"},
+    {"id": 2, "name": "佐藤花子", "company_name": "テスト合同会社"},
+    {"id": 3, "name": "鈴木一郎", "company_name": "デモ企業"}
+]
 
-# 🎯 ルートエンドポイント
+DUMMY_BALANCES = [
+    {"user_id": 1, "current_points": 500, "expiring_points": 100},
+    {"user_id": 2, "current_points": 1000, "expiring_points": 200},
+    {"user_id": 3, "current_points": 1500, "expiring_points": 0}
+]
+
+DUMMY_HISTORY = [
+    {"id": 1, "user_id": 1, "date": datetime.utcnow(), "description": "初回登録ボーナス", "points": 500},
+    {"id": 2, "user_id": 2, "date": datetime.utcnow(), "description": "商品購入", "points": 1000},
+    {"id": 3, "user_id": 3, "date": datetime.utcnow(), "description": "友達紹介ボーナス", "points": 1500}
+]
+
+DUMMY_ITEMS = [
+    {"id": 1, "name": "QUOカード 500円分", "points_required": 500},
+    {"id": 2, "name": "Amazonギフト券 1000円分", "points_required": 1000},
+    {"id": 3, "name": "高級ディナー招待券", "points_required": 2000}
+]
+
+# ルートエンドポイント
 @app.get("/")
 def read_root():
-    # データベース接続情報
-    db_info = {
-        "status": "正常" if db_connection_error is None else "エラー",
-        "type": "MySQL" if not USING_SQLITE_FALLBACK else "SQLite (フォールバック)",
-        "error": db_connection_error
-    }
-    
     return {
-        "message": "Welcome to the Point Management System API!",
-        "database": db_info
+        "message": "Welcome to the Point Management System API! (超シンプル版)",
+        "status": "正常",
+        "mode": "固定データのみ - データベース接続なし"
     }
 
 # データベース接続テスト用エンドポイント
 @app.get("/test-db-connection")
 def test_db_connection():
-    try:
-        # 実際にデータベースに接続してみる
-        conn = engine.connect()
-        # 簡単なSQLクエリを実行してみる
-        result = conn.execute("SELECT 1").fetchone()
-        conn.close()
-        
-        # カレントディレクトリの内容を確認
-        try:
-            dir_contents = os.listdir(os.getcwd())
-        except Exception as e:
-            dir_contents = f"ディレクトリ内容取得エラー: {str(e)}"
-        
-        return {
-            "status": "success",
-            "message": "データベース接続に成功しました",
-            "sql_result": result[0] if result else None,
-            "database_url": DATABASE_URL.replace(MYSQL_PASSWORD, "***"),
-            "database_config": {
-                "user": MYSQL_USER,
-                "host": MYSQL_HOST,
-                "port": MYSQL_PORT,
-                "database": MYSQL_DATABASE,
-                "ssl_ca": MYSQL_SSL_CA,
-                "ssl_ca_exists": os.path.isfile(os.path.join(os.getcwd(), MYSQL_SSL_CA)),
-                "ssl_mode": SSL_MODE,
-                # パスワードはセキュリティ上の理由で含めない
-            },
-            "environment": {
-                "current_dir": os.getcwd(),
-                "dir_contents": dir_contents,
-                "python_version": sys.version,
-                "platform": sys.platform
-            }
-        }
-    except Exception as e:
-        # エラーの詳細情報を収集
-        error_info = {
-            "type": type(e).__name__,
-            "message": str(e),
-            "traceback": traceback.format_exc()
-        }
-        
-        # カレントディレクトリの内容を確認
-        try:
-            dir_contents = os.listdir(os.getcwd())
-        except Exception as dir_e:
-            dir_contents = f"ディレクトリ内容取得エラー: {str(dir_e)}"
-        
-        return {
-            "status": "error",
-            "message": f"データベース接続エラー: {str(e)}",
-            "error_details": error_info,
-            "database_config": {
-                "user": MYSQL_USER,
-                "host": MYSQL_HOST,
-                "port": MYSQL_PORT,
-                "database": MYSQL_DATABASE,
-                "ssl_ca": MYSQL_SSL_CA,
-                "ssl_ca_exists": os.path.isfile(os.path.join(os.getcwd(), MYSQL_SSL_CA)),
-                "ssl_mode": SSL_MODE,
-                # パスワードはセキュリティ上の理由で含めない
-            },
-            "environment": {
-                "current_dir": os.getcwd(),
-                "dir_contents": dir_contents,
-                "python_version": sys.version,
-                "platform": sys.platform
-            }
-        }
-
-# ==============================
-# 🎯 DBセッション取得関数
-# ==============================
-def get_db():
-    """ データベースセッションを取得する関数 """
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
-
-# ==============================
-# 🎯 API: ユーザー情報取得
-# ==============================
-@app.get("/users", response_model=List[UserResponse])
-def get_users(db: Session = Depends(get_db)):
-    """ ユーザーの一覧を取得する """
-    users = db.query(User).all()
-    return users
-
-@app.get("/users/{user_id}", response_model=UserResponse)
-def get_user(user_id: int, db: Session = Depends(get_db)):
-    """ 指定ユーザーの情報を取得する """
-    user = db.query(User).filter(User.id == user_id).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    return user
-
-# ==============================
-# 🎯 API: ユーザーのポイント残高取得
-# ==============================
-@app.get("/users/{user_id}/balance", response_model=BalanceResponse)
-def get_user_balance(user_id: int, db: Session = Depends(get_db)):
-    """ 指定ユーザーの現在のポイント、失効予定ポイントを取得（期間限定ポイント削除） """
-    balance = db.query(UserBalance).filter(UserBalance.user_id == user_id).first()
-    if not balance:
-        raise HTTPException(status_code=404, detail="User not found")
     return {
-        "user_id": user_id,
-        "current_points": balance.current_points,
-        # "scheduled_points": balance.scheduled_points,  # 削除
-        "expiring_points": balance.expiring_points,
+        "status": "success",
+        "message": "テストモード: 固定データのみを使用",
+        "mode": "データベースなし"
     }
 
-# ==============================
-# 🎯 API: ユーザーのポイント履歴取得
-# ==============================
-# 既存のエンドポイントを残す
-@app.get("/users/{user_id}/points/history", response_model=List[dict])
-def get_point_history_legacy(user_id: int, db: Session = Depends(get_db)):
-    """ 指定ユーザーのポイント履歴を取得する（レガシーエンドポイント） """
-    history = db.query(PointHistory).filter(PointHistory.user_id == user_id).all()
-    return [
-        {"date": h.date, "description": h.description, "points": h.points}
-        for h in history
-    ]
+# ユーザー一覧取得API
+@app.get("/users")
+def get_users():
+    return DUMMY_USERS
 
-@app.get("/users/{user_id}/point-history", response_model=List[PointHistoryResponse])
-def get_point_history(
-    user_id: int, 
-    limit: Optional[int] = Query(5, description="取得する履歴の最大数"),
-    filter_type: Optional[str] = Query(None, description="履歴タイプ（all, earned, used）"),
-    db: Session = Depends(get_db)
-):
-    """ 指定ユーザーのポイント履歴を取得する（フィルタリング機能付き） """
-    query = db.query(PointHistory).filter(PointHistory.user_id == user_id)
-    
-    # フィルタリング条件
-    if filter_type == "earned":
-        query = query.filter(PointHistory.points > 0)
-    elif filter_type == "used":
-        query = query.filter(PointHistory.points < 0)
-    
-    # 日付の新しい順に取得
-    query = query.order_by(desc(PointHistory.date))
-    
-    # 件数制限
-    if limit:
-        query = query.limit(limit)
-    
-    history = query.all()
-    return history
+# 特定ユーザー情報取得API
+@app.get("/users/{user_id}")
+def get_user(user_id: int):
+    for user in DUMMY_USERS:
+        if user["id"] == user_id:
+            return user
+    return {"error": "User not found"}
 
-# ==============================
-# 🎯 API: 交換可能アイテム一覧取得
-# ==============================
-@app.get("/redeemable-items", response_model=List[RedeemableItemResponse])
-def get_redeemable_items(db: Session = Depends(get_db)):
-    """ 交換可能なアイテム一覧を取得する """
-    items = db.query(RedeemableItem).all()
-    return items
+# ユーザーの残高取得API
+@app.get("/users/{user_id}/balance")
+def get_user_balance(user_id: int):
+    for balance in DUMMY_BALANCES:
+        if balance["user_id"] == user_id:
+            return balance
+    return {"error": "Balance not found"}
 
-# ==============================
-# 🎯 API: ポイント交換処理
-# ==============================
-# 既存のエンドポイントを残す
-@app.post("/users/{user_id}/redeem/{item_id}")
-def redeem_points_legacy(user_id: int, item_id: int, db: Session = Depends(get_db)):
-    """ ユーザーがポイントを使ってアイテムを交換する処理（レガシーエンドポイント） """
-    
-    # 交換可能なアイテムを取得
-    item = db.query(RedeemableItem).filter(RedeemableItem.id == item_id).first()
-    if not item:
-        raise HTTPException(status_code=404, detail="Item not found")
+# ユーザーのポイント履歴取得API
+@app.get("/users/{user_id}/point-history")
+def get_point_history(user_id: int):
+    user_history = []
+    for history in DUMMY_HISTORY:
+        if history["user_id"] == user_id:
+            user_history.append(history)
+    return user_history
 
-    # ユーザーの残高を取得
-    balance = db.query(UserBalance).filter(UserBalance.user_id == user_id).first()
-    if not balance:
-        raise HTTPException(status_code=404, detail="User not found")
-
-    # 必要なポイントが足りるか確認
-    if balance.current_points < item.points_required:
-        raise HTTPException(status_code=400, detail="Not enough points")
-
-    # ポイントを減算
-    balance.current_points -= item.points_required
-
-    # 交換履歴を追加
-    redemption = RedemptionHistory(user_id=user_id, item_id=item_id, points_spent=item.points_required)
-    db.add(redemption)
-
-    # ポイント履歴を追加
-    history = PointHistory(
-        user_id=user_id, 
-        description=f"{item.name}と交換", 
-        points=-item.points_required
-    )
-    db.add(history)
-
-    # 変更をデータベースに保存
-    db.commit()
-
-    return {"message": "ポイント交換が完了しました", "new_balance": balance.current_points}
-
-@app.post("/use-points")
-def use_points(request: UsePointsRequest, db: Session = Depends(get_db)):
-    """ ユーザーがポイントを使ってアイテムと交換する処理 """
-    
-    # 交換可能なアイテムを取得
-    item = db.query(RedeemableItem).filter(RedeemableItem.id == request.item_id).first()
-    if not item:
-        raise HTTPException(status_code=404, detail="Item not found")
-
-    # ユーザーの残高を取得
-    balance = db.query(UserBalance).filter(UserBalance.user_id == request.user_id).first()
-    if not balance:
-        raise HTTPException(status_code=404, detail="User not found")
-
-    # 必要なポイントが足りるか確認
-    if balance.current_points < request.points:
-        raise HTTPException(status_code=400, detail="Not enough points")
-
-    # ポイントを減算
-    balance.current_points -= request.points
-
-    # 交換履歴を追加
-    redemption = RedemptionHistory(
-        user_id=request.user_id, 
-        item_id=request.item_id, 
-        points_spent=request.points
-    )
-    db.add(redemption)
-
-    # ポイント履歴を追加
-    history = PointHistory(
-        user_id=request.user_id, 
-        date=datetime.now(),
-        description=f"{item.name}と交換", 
-        points=-request.points,
-        remarks=f"アイテム交換: {item.name}"
-    )
-    db.add(history)
-
-    # 変更をデータベースに保存
-    db.commit()
-
-    return {
-        "success": True,
-        "message": "ポイント交換が完了しました", 
-        "remaining_points": balance.current_points
-    }
+# アイテム一覧取得API
+@app.get("/redeemable-items")
+def get_redeemable_items():
+    return DUMMY_ITEMS
 
 # ==============================
 # 🎯 FastAPI の起動コマンド
