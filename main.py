@@ -83,39 +83,16 @@ class UsePointsRequest(BaseModel):
 # ==============================
 # 🎯 MySQL の接続設定
 # ==============================
-db_connection_error = None
-USING_SQLITE_FALLBACK = False
+db_connection_error = "デモモード: MySQLへの接続をスキップして、SQLiteを使用します"
+USING_SQLITE_FALLBACK = True
 
-try:
-    # 最もシンプルな接続文字列 - SSLなし
-    DATABASE_URL = f"mysql+pymysql://{MYSQL_USER}:{MYSQL_PASSWORD}@{MYSQL_HOST}:{MYSQL_PORT}/{MYSQL_DATABASE}"
-    print(f"✅ データベース接続URL（パスワードなし）: {DATABASE_URL.replace(MYSQL_PASSWORD, '***')}")
-    
-    # SSL関連のパラメータなしでエンジン作成
-    engine = create_engine(DATABASE_URL)
-    
-    # 試験的に接続を確認
-    with engine.connect() as connection:
-        print("✅ データベース接続テスト成功!")
-        
-    # セッションの設定
-    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    
-except Exception as e:
-    # 接続エラーを記録
-    db_connection_error = str(e)
-    print(f"❌ MySQL接続エラー: {str(e)}")
-    
-    # SQLiteメモリデータベースにフォールバック
-    print("⚠️ SQLiteメモリデータベースにフォールバックします")
-    USING_SQLITE_FALLBACK = True
-    
-    # SQLiteメモリデータベースの設定
-    DATABASE_URL = "sqlite:///:memory:"
-    engine = create_engine(DATABASE_URL)
-    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    
-    print("✅ SQLiteフォールバック設定完了")
+print("⚠️ デモモード: MySQLへの接続をスキップして、SQLiteを使用します")
+
+# SQLite in-memory databaseの設定
+DATABASE_URL = "sqlite:///:memory:"
+engine = create_engine(DATABASE_URL)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+print("✅ SQLiteデモモード設定完了")
 
 # SQLAlchemyベースクラス
 Base = declarative_base()
