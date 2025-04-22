@@ -7,6 +7,8 @@ from datetime import datetime
 from dotenv import load_dotenv
 from typing import List, Optional
 from pydantic import BaseModel
+import sys
+import traceback
 
 # ==============================
 # 🎯 .env ファイルの読み込み
@@ -20,6 +22,7 @@ MYSQL_HOST = os.getenv("MYSQL_HOST", "tech0-gen-8-step4-sakepara-db.mysql.databa
 MYSQL_PORT = os.getenv("MYSQL_PORT", "3306")
 MYSQL_DATABASE = os.getenv("MYSQL_DATABASE", "point_program_db")
 MYSQL_SSL_CA = os.getenv("MYSQL_SSL_CA", "DigiCertGlobalRootCA.crt.pem")
+SSL_MODE = os.getenv("SSL_MODE", "preferred")  # preferred, required, disabled
 
 # ポート番号を整数に変換
 try:
@@ -34,6 +37,16 @@ print(f"MYSQL_HOST: {MYSQL_HOST}")
 print(f"MYSQL_PORT: {MYSQL_PORT}")
 print(f"MYSQL_DATABASE: {MYSQL_DATABASE}")
 print(f"MYSQL_SSL_CA: {MYSQL_SSL_CA}")
+print(f"SSL_MODE: {SSL_MODE}")
+
+# カレントディレクトリの確認
+current_dir = os.getcwd()
+print(f"現在の作業ディレクトリ: {current_dir}")
+
+# ファイルの存在確認
+ssl_ca_path = os.path.join(current_dir, MYSQL_SSL_CA)
+ssl_ca_exists = os.path.isfile(ssl_ca_path)
+print(f"SSL証明書ファイル({ssl_ca_path})の存在: {ssl_ca_exists}")
 
 # ==============================
 # 🎯 リクエスト/レスポンスのモデル
@@ -72,9 +85,32 @@ class UsePointsRequest(BaseModel):
 # ==============================
 db_connection_error = None
 try:
-    DATABASE_URL = f"mysql+pymysql://{MYSQL_USER}:{MYSQL_PASSWORD}@{MYSQL_HOST}:{MYSQL_PORT}/{MYSQL_DATABASE}?ssl_ca={MYSQL_SSL_CA}"
-    print(f"✅ データベース接続URL（パスワードなし）: mysql+pymysql://{MYSQL_USER}:***@{MYSQL_HOST}:{MYSQL_PORT}/{MYSQL_DATABASE}")
-    engine = create_engine(DATABASE_URL)
+    # SSL設定を環境に応じて調整
+    connect_args = {}
+    
+    if SSL_MODE == "required":
+        if ssl_ca_exists:
+            # SSL証明書ファイルが存在する場合は使用
+            print(f"✅ SSL証明書ファイルを使用: {ssl_ca_path}")
+            connect_args = {"ssl": {"ca": ssl_ca_path}}
+            DATABASE_URL = f"mysql+pymysql://{MYSQL_USER}:{MYSQL_PASSWORD}@{MYSQL_HOST}:{MYSQL_PORT}/{MYSQL_DATABASE}"
+        else:
+            # SSL証明書ファイルが存在しない場合は警告
+            print(f"⚠️ SSL証明書ファイルが見つかりません: {ssl_ca_path}")
+            # とりあえずSSL設定なしで試す
+            DATABASE_URL = f"mysql+pymysql://{MYSQL_USER}:{MYSQL_PASSWORD}@{MYSQL_HOST}:{MYSQL_PORT}/{MYSQL_DATABASE}?ssl_mode=REQUIRED"
+    elif SSL_MODE == "disabled":
+        # SSL無効モード
+        print("⚠️ SSLは無効に設定されています。本番環境では推奨されません。")
+        DATABASE_URL = f"mysql+pymysql://{MYSQL_USER}:{MYSQL_PASSWORD}@{MYSQL_HOST}:{MYSQL_PORT}/{MYSQL_DATABASE}?ssl_mode=DISABLED"
+    else:
+        # デフォルト（preferred）
+        print("✅ SSL設定: preferred（利用可能な場合はSSLを使用）")
+        DATABASE_URL = f"mysql+pymysql://{MYSQL_USER}:{MYSQL_PASSWORD}@{MYSQL_HOST}:{MYSQL_PORT}/{MYSQL_DATABASE}?ssl_mode=PREFERRED"
+    
+    print(f"✅ データベース接続URL（パスワードなし）: {DATABASE_URL.replace(MYSQL_PASSWORD, '***')}")
+    engine = create_engine(DATABASE_URL, connect_args=connect_args)
+    
     # 試験的に接続してみる
     with engine.connect() as connection:
         print("✅ データベース接続テスト成功!")
@@ -82,6 +118,8 @@ try:
 except Exception as e:
     db_connection_error = str(e)
     print(f"❌ データベース接続エラー: {str(e)}")
+    print(f"❌ エラーの種類: {type(e).__name__}")
+    
     # エラーが発生した場合でもアプリケーションを続行できるようにする
     DATABASE_URL = "sqlite:///:memory:"  # メモリ内SQLiteを使用
     print(f"⚠️ フォールバック: SQLiteメモリデータベースを使用します")
@@ -175,30 +213,71 @@ def test_db_connection():
     try:
         # 実際にデータベースに接続してみる
         conn = engine.connect()
+        # 簡単なSQLクエリを実行してみる
+        result = conn.execute("SELECT 1").fetchone()
         conn.close()
+        
+        # カレントディレクトリの内容を確認
+        try:
+            dir_contents = os.listdir(os.getcwd())
+        except Exception as e:
+            dir_contents = f"ディレクトリ内容取得エラー: {str(e)}"
+        
         return {
             "status": "success",
             "message": "データベース接続に成功しました",
+            "sql_result": result[0] if result else None,
+            "database_url": DATABASE_URL.replace(MYSQL_PASSWORD, "***"),
             "database_config": {
                 "user": MYSQL_USER,
                 "host": MYSQL_HOST,
                 "port": MYSQL_PORT,
                 "database": MYSQL_DATABASE,
                 "ssl_ca": MYSQL_SSL_CA,
+                "ssl_ca_exists": os.path.isfile(os.path.join(os.getcwd(), MYSQL_SSL_CA)),
+                "ssl_mode": SSL_MODE,
                 # パスワードはセキュリティ上の理由で含めない
+            },
+            "environment": {
+                "current_dir": os.getcwd(),
+                "dir_contents": dir_contents,
+                "python_version": sys.version,
+                "platform": sys.platform
             }
         }
     except Exception as e:
+        # エラーの詳細情報を収集
+        error_info = {
+            "type": type(e).__name__,
+            "message": str(e),
+            "traceback": traceback.format_exc()
+        }
+        
+        # カレントディレクトリの内容を確認
+        try:
+            dir_contents = os.listdir(os.getcwd())
+        except Exception as dir_e:
+            dir_contents = f"ディレクトリ内容取得エラー: {str(dir_e)}"
+        
         return {
             "status": "error",
             "message": f"データベース接続エラー: {str(e)}",
+            "error_details": error_info,
             "database_config": {
                 "user": MYSQL_USER,
                 "host": MYSQL_HOST,
                 "port": MYSQL_PORT,
                 "database": MYSQL_DATABASE,
                 "ssl_ca": MYSQL_SSL_CA,
+                "ssl_ca_exists": os.path.isfile(os.path.join(os.getcwd(), MYSQL_SSL_CA)),
+                "ssl_mode": SSL_MODE,
                 # パスワードはセキュリティ上の理由で含めない
+            },
+            "environment": {
+                "current_dir": os.getcwd(),
+                "dir_contents": dir_contents,
+                "python_version": sys.version,
+                "platform": sys.platform
             }
         }
 
