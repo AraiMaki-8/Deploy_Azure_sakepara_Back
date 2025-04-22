@@ -85,54 +85,72 @@ class UsePointsRequest(BaseModel):
 # ==============================
 db_connection_error = None
 try:
-    # SSL設定を環境に応じて調整
-    connect_args = {}
-    
-    if SSL_MODE == "required":
-        if ssl_ca_exists:
-            # SSL証明書ファイルが存在する場合は使用
-            print(f"✅ SSL証明書ファイルを使用: {ssl_ca_path}")
-            connect_args = {"ssl": {"ca": ssl_ca_path}}
-            DATABASE_URL = f"mysql+pymysql://{MYSQL_USER}:{MYSQL_PASSWORD}@{MYSQL_HOST}:{MYSQL_PORT}/{MYSQL_DATABASE}"
-        else:
-            # SSL証明書ファイルが存在しない場合は警告
-            print(f"⚠️ SSL証明書ファイルが見つかりません: {ssl_ca_path}")
-            # SSL接続なしで試行
-            DATABASE_URL = f"mysql+pymysql://{MYSQL_USER}:{MYSQL_PASSWORD}@{MYSQL_HOST}:{MYSQL_PORT}/{MYSQL_DATABASE}"
-    elif SSL_MODE == "disabled":
-        # SSL無効モード
-        print("⚠️ SSLは無効に設定されています。本番環境では推奨されません。")
-        DATABASE_URL = f"mysql+pymysql://{MYSQL_USER}:{MYSQL_PASSWORD}@{MYSQL_HOST}:{MYSQL_PORT}/{MYSQL_DATABASE}"
-    else:
-        # デフォルト（preferred）- connect_argsを使用するため、URLにはSSLパラメータを含めない
-        print("✅ SSL設定: preferred（利用可能な場合はSSLを使用）")
-        # 証明書ファイルが存在する場合のみ追加
-        if ssl_ca_exists:
-            connect_args = {"ssl": {"ca": ssl_ca_path}}
-        DATABASE_URL = f"mysql+pymysql://{MYSQL_USER}:{MYSQL_PASSWORD}@{MYSQL_HOST}:{MYSQL_PORT}/{MYSQL_DATABASE}"
-    
+    # まずSSLなしで試してみる - シンプルな接続文字列
+    DATABASE_URL = f"mysql+pymysql://{MYSQL_USER}:{MYSQL_PASSWORD}@{MYSQL_HOST}:{MYSQL_PORT}/{MYSQL_DATABASE}"
     print(f"✅ データベース接続URL（パスワードなし）: {DATABASE_URL.replace(MYSQL_PASSWORD, '***')}")
-    print(f"✅ 使用するconnect_args: {connect_args}")
     
-    # 明示的にconnect_argsを指定
+    # SSLを明示的に無効化
+    connect_args = {"ssl": {"ssl_disabled": True}}
+    print(f"✅ SSLを無効化して接続を試みます")
+    
     engine = create_engine(DATABASE_URL, connect_args=connect_args)
     
     # 試験的に接続してみる
     with engine.connect() as connection:
-        print("✅ データベース接続テスト成功!")
+        # 簡単なクエリを実行して接続を確認
+        result = connection.execute("SELECT 1").fetchone()
+        print(f"✅ データベース接続テスト成功! 結果: {result[0]}")
+    
     SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    print("✅ SessionLocal作成成功")
 except Exception as e:
     db_connection_error = str(e)
     print(f"❌ データベース接続エラー: {str(e)}")
     print(f"❌ エラーの種類: {type(e).__name__}")
     
-    # エラーが発生した場合でもアプリケーションを続行できるようにする
-    DATABASE_URL = "sqlite:///:memory:"  # メモリ内SQLiteを使用
-    print(f"⚠️ フォールバック: SQLiteメモリデータベースを使用します")
-    engine = create_engine(DATABASE_URL)
-    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    try:
+        # SSLを使用して再試行
+        print("⚠️ SSLなしでの接続に失敗しました。SSLを使用して再試行します...")
+        
+        ssl_settings = {}
+        if ssl_ca_exists:
+            ssl_settings = {"ca": ssl_ca_path}
+            
+        connect_args = {"ssl": ssl_settings}
+        DATABASE_URL = f"mysql+pymysql://{MYSQL_USER}:{MYSQL_PASSWORD}@{MYSQL_HOST}:{MYSQL_PORT}/{MYSQL_DATABASE}"
+        print(f"✅ 再試行: データベース接続URL（パスワードなし）: {DATABASE_URL.replace(MYSQL_PASSWORD, '***')}")
+        print(f"✅ 再試行: SSL設定 = {connect_args}")
+        
+        engine = create_engine(DATABASE_URL, connect_args=connect_args)
+        
+        # 試験的に接続してみる
+        with engine.connect() as connection:
+            print("✅ SSL付きでのデータベース接続テスト成功!")
+        
+        SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+        # エラーをクリアする
+        db_connection_error = None
+        print("✅ SSL付きでの接続に成功しました")
+    except Exception as ssl_e:
+        print(f"❌ SSL付きでの接続も失敗しました: {str(ssl_e)}")
+        
+        # エラーが発生した場合でもアプリケーションを続行できるようにする
+        # SQLiteメモリデータベースを使用
+        print(f"⚠️ フォールバック: SQLiteメモリデータベースを使用します")
+        DATABASE_URL = "sqlite:///:memory:"
+        engine = create_engine(DATABASE_URL)
+        SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+        
+        # サンプルデータを作成するためのフラグを設定
+        USING_SQLITE_FALLBACK = True
+        # SQLiteの場合はエラーを更新
+        db_connection_error = f"MySQL接続エラー: {str(e)} / SSL試行エラー: {str(ssl_e)}"
 
+# declarative_base
 Base = declarative_base()
+
+# グローバル変数
+USING_SQLITE_FALLBACK = False
 
 # ==============================
 # 🎯 データモデル (SQLAlchemy)
@@ -200,6 +218,53 @@ app.add_middleware(
 try:
     Base.metadata.create_all(bind=engine)
     print("✅ データベーステーブルの作成または確認が完了しました")
+    
+    # SQLiteフォールバックの場合はサンプルデータを作成
+    if USING_SQLITE_FALLBACK:
+        print("⚠️ SQLiteフォールバックモード: サンプルデータを作成します")
+        # セッションを取得
+        db = SessionLocal()
+        
+        # テーブルが空かチェック
+        if db.query(User).count() == 0:
+            print("⚠️ ユーザーテーブルが空です。サンプルユーザーを作成します。")
+            # サンプルユーザーの追加
+            sample_users = [
+                User(id=1, name="山田太郎", company_name="サンプル株式会社"),
+                User(id=2, name="佐藤花子", company_name="テスト合同会社"),
+                User(id=3, name="鈴木一郎", company_name="デモ企業")
+            ]
+            db.add_all(sample_users)
+            
+            # サンプル残高の追加
+            sample_balances = [
+                UserBalance(user_id=1, current_points=500, scheduled_points=200, expiring_points=100),
+                UserBalance(user_id=2, current_points=1000, scheduled_points=0, expiring_points=200),
+                UserBalance(user_id=3, current_points=1500, scheduled_points=500, expiring_points=0)
+            ]
+            db.add_all(sample_balances)
+            
+            # サンプルポイント履歴の追加
+            sample_history = [
+                PointHistory(user_id=1, description="初回登録ボーナス", points=500, date=datetime.utcnow()),
+                PointHistory(user_id=2, description="商品購入", points=1000, date=datetime.utcnow()),
+                PointHistory(user_id=3, description="友達紹介ボーナス", points=1500, date=datetime.utcnow())
+            ]
+            db.add_all(sample_history)
+            
+            # サンプル交換アイテムの追加
+            sample_items = [
+                RedeemableItem(id=1, name="QUOカード 500円分", points_required=500),
+                RedeemableItem(id=2, name="Amazonギフト券 1000円分", points_required=1000),
+                RedeemableItem(id=3, name="高級ディナー招待券", points_required=2000)
+            ]
+            db.add_all(sample_items)
+            
+            # 変更をコミット
+            db.commit()
+            print("✅ サンプルデータの作成が完了しました")
+        
+        db.close()
 except Exception as e:
     print(f"❌ データベーステーブル作成エラー: {str(e)}")
 
