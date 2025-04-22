@@ -13,17 +13,25 @@ from pydantic import BaseModel
 # ==============================
 load_dotenv()
 
-MYSQL_USER = os.getenv("MYSQL_USER")
-MYSQL_PASSWORD = os.getenv("MYSQL_PASSWORD")
-MYSQL_HOST = os.getenv("MYSQL_HOST")
-MYSQL_PORT = os.getenv("MYSQL_PORT")
-MYSQL_DATABASE = os.getenv("MYSQL_DATABASE")
-MYSQL_SSL_CA = os.getenv("MYSQL_SSL_CA")
+# 環境変数の取得 - デフォルト値を設定
+MYSQL_USER = os.getenv("MYSQL_USER", "sakeparadb")
+MYSQL_PASSWORD = os.getenv("MYSQL_PASSWORD", "lzxVB3hCBTDi")
+MYSQL_HOST = os.getenv("MYSQL_HOST", "tech0-gen-8-step4-sakepara-db.mysql.database.azure.com")
+MYSQL_PORT = os.getenv("MYSQL_PORT", "3306")
+MYSQL_DATABASE = os.getenv("MYSQL_DATABASE", "point_program_db")
+MYSQL_SSL_CA = os.getenv("MYSQL_SSL_CA", "DigiCertGlobalRootCA.crt.pem")
+
+# ポート番号を整数に変換
+try:
+    MYSQL_PORT = int(MYSQL_PORT)
+except (ValueError, TypeError):
+    MYSQL_PORT = 3306  # 変換できない場合はデフォルト値を使用
 
 # 環境変数の読み込み状況（デバッグ用）
 print("✅ 環境変数の確認:")
 print(f"MYSQL_USER: {MYSQL_USER}")
 print(f"MYSQL_HOST: {MYSQL_HOST}")
+print(f"MYSQL_PORT: {MYSQL_PORT}")
 print(f"MYSQL_DATABASE: {MYSQL_DATABASE}")
 print(f"MYSQL_SSL_CA: {MYSQL_SSL_CA}")
 
@@ -62,9 +70,24 @@ class UsePointsRequest(BaseModel):
 # ==============================
 # 🎯 MySQL の接続設定
 # ==============================
-DATABASE_URL = f"mysql+pymysql://{MYSQL_USER}:{MYSQL_PASSWORD}@{MYSQL_HOST}:{MYSQL_PORT}/{MYSQL_DATABASE}?ssl_ca={MYSQL_SSL_CA}"
-engine = create_engine(DATABASE_URL)
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+db_connection_error = None
+try:
+    DATABASE_URL = f"mysql+pymysql://{MYSQL_USER}:{MYSQL_PASSWORD}@{MYSQL_HOST}:{MYSQL_PORT}/{MYSQL_DATABASE}?ssl_ca={MYSQL_SSL_CA}"
+    print(f"✅ データベース接続URL（パスワードなし）: mysql+pymysql://{MYSQL_USER}:***@{MYSQL_HOST}:{MYSQL_PORT}/{MYSQL_DATABASE}")
+    engine = create_engine(DATABASE_URL)
+    # 試験的に接続してみる
+    with engine.connect() as connection:
+        print("✅ データベース接続テスト成功!")
+    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+except Exception as e:
+    db_connection_error = str(e)
+    print(f"❌ データベース接続エラー: {str(e)}")
+    # エラーが発生した場合でもアプリケーションを続行できるようにする
+    DATABASE_URL = "sqlite:///:memory:"  # メモリ内SQLiteを使用
+    print(f"⚠️ フォールバック: SQLiteメモリデータベースを使用します")
+    engine = create_engine(DATABASE_URL)
+    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
 Base = declarative_base()
 
 # ==============================
@@ -129,10 +152,55 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# データベーステーブルの作成
+try:
+    Base.metadata.create_all(bind=engine)
+    print("✅ データベーステーブルの作成または確認が完了しました")
+except Exception as e:
+    print(f"❌ データベーステーブル作成エラー: {str(e)}")
+
 # 🎯 ルートエンドポイント
 @app.get("/")
 def read_root():
-    return {"message": "Welcome to the Point Management System API!"}
+    db_status = "正常" if db_connection_error is None else "エラー"
+    return {
+        "message": "Welcome to the Point Management System API!",
+        "database_status": db_status,
+        "database_error": db_connection_error
+    }
+
+# データベース接続テスト用エンドポイント
+@app.get("/test-db-connection")
+def test_db_connection():
+    try:
+        # 実際にデータベースに接続してみる
+        conn = engine.connect()
+        conn.close()
+        return {
+            "status": "success",
+            "message": "データベース接続に成功しました",
+            "database_config": {
+                "user": MYSQL_USER,
+                "host": MYSQL_HOST,
+                "port": MYSQL_PORT,
+                "database": MYSQL_DATABASE,
+                "ssl_ca": MYSQL_SSL_CA,
+                # パスワードはセキュリティ上の理由で含めない
+            }
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"データベース接続エラー: {str(e)}",
+            "database_config": {
+                "user": MYSQL_USER,
+                "host": MYSQL_HOST,
+                "port": MYSQL_PORT,
+                "database": MYSQL_DATABASE,
+                "ssl_ca": MYSQL_SSL_CA,
+                # パスワードはセキュリティ上の理由で含めない
+            }
+        }
 
 # ==============================
 # 🎯 DBセッション取得関数
